@@ -1,12 +1,10 @@
 import { inngest } from "./client";
 import prisma from "@/lib/prisma";
 import Groq from "groq-sdk";
+import { Octokit } from "@octokit/rest";
 
 const groq = new Groq({ apiKey: process.env.API_KEY_GROQ });
 
-/**
- * Basic 'Hello World' function
- */
 export const helloWorld = inngest.createFunction(
   { id: "hello-world", triggers: [{ event: "test/hello.world" }] },
   async ({ event, step }) => {
@@ -15,10 +13,6 @@ export const helloWorld = inngest.createFunction(
   }
 );
 
-/**
- * Handles the AI chat generation in a durable Inngest workflow.
- * Triggers when a user sends a message.
- */
 export const processAiChat = inngest.createFunction(
   {
     id: "process-ai-chat",
@@ -26,8 +20,6 @@ export const processAiChat = inngest.createFunction(
   },
   async ({ event, step }) => {
     const { userId, content } = event.data as { userId: string; content: string };
-
-    // 1. Retrieve conversation history for context
     const history = await step.run("fetch-history", async () => {
       const messages = await prisma.chatMessage.findMany({
         where: { userId },
@@ -40,7 +32,7 @@ export const processAiChat = inngest.createFunction(
       }));
     });
 
-    // 2. Call Groq for the AI response
+
     const aiResponse = await step.run("call-groq", async () => {
       const completion = await groq.chat.completions.create({
         messages: [
@@ -54,7 +46,7 @@ export const processAiChat = inngest.createFunction(
       return completion.choices[0]?.message?.content || "I'm sorry, I couldn't generate a response.";
     });
 
-    // 3. Save the assistant's reply to the database
+
     await step.run("save-assistant-reply", async () => {
       await prisma.chatMessage.create({
         data: {
@@ -69,9 +61,7 @@ export const processAiChat = inngest.createFunction(
   }
 );
 
-/**
- * Placeholder for sending Telegram Notifications
- */
+
 export const sendTelegramNotification = inngest.createFunction(
   { id: "send-telegram-notification", triggers: [{ event: "notification/send.telegram" }] },
   async ({ event, step }) => {
@@ -83,5 +73,60 @@ export const sendTelegramNotification = inngest.createFunction(
     });
 
     return { success: true };
+  }
+);
+
+
+export const performGithubOperation = inngest.createFunction(
+  { id: "github-operation", triggers: [{ event: "github/operation.perform" }] },
+  async ({ event, step }) => {
+    const { token, operation, repo, owner } = event.data as { token: string; operation: string; repo?: string; owner?: string };
+
+    const result = await step.run("execute-octokit", async () => {
+      const octokit = new Octokit({ auth: token || process.env.GITHUB_TOKEN });
+
+      if (operation === "user-info") {
+        const { data } = await octokit.rest.users.getAuthenticated();
+        return data;
+      }
+
+      if (operation === "repo-issues" && owner && repo) {
+        const { data } = await octokit.rest.issues.listForRepo({ owner, repo });
+        return data;
+      }
+
+      return { error: "Unknown operation or missing parameters" };
+    });
+
+    return { success: true, result };
+  }
+);
+
+/**
+ * Creates a new GitHub repository from the workflow template for the user.
+ */
+export const createGithubRepoFromTemplate = inngest.createFunction(
+  { id: "create-github-repo-from-template", triggers: [{ event: "github/repo.create_from_template" }] },
+  async ({ event, step }) => {
+    const { token, repoName, isPrivate = false } = event.data as { token: string; repoName: string; isPrivate?: boolean };
+
+    const result = await step.run("create-repo-from-template", async () => {
+      const octokit = new Octokit({ auth: token || process.env.GITHUB_TOKEN });
+      
+      const response = await octokit.rest.repos.createUsingTemplate({
+        template_owner: "rajaryan2007",
+        template_repo: "template-for-workflow",
+        name: repoName,
+        private: isPrivate,
+      });
+
+      return {
+        url: response.data.html_url,
+        clone_url: response.data.clone_url,
+        full_name: response.data.full_name
+      };
+    });
+
+    return { success: true, result };
   }
 );

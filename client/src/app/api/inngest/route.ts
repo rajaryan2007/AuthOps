@@ -1,6 +1,6 @@
 import { serve } from "inngest/next";
 import { inngest } from "@/lib/inngest/client";
-import { helloWorld, sendTelegramNotification, processAiChat } from "@/lib/inngest/functions";
+import { helloWorld, sendTelegramNotification, processAiChat, performGithubOperation, createGithubRepoFromTemplate } from "@/lib/inngest/functions";
 
 // Setting up the Inngest API route handler.
 export const { GET, POST, PUT } = serve({
@@ -8,6 +8,8 @@ export const { GET, POST, PUT } = serve({
   functions: [
     helloWorld,
     sendTelegramNotification,
-    processAiChat
+    processAiChat,
+    performGithubOperation,
+    createGithubRepoFromTemplate
   ],
 });
