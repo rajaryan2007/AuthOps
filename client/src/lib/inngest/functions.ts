@@ -36,14 +36,63 @@ export const processAiChat = inngest.createFunction(
     const aiResponse = await step.run("call-groq", async () => {
       const completion = await groq.chat.completions.create({
         messages: [
-          { role: "system", content: "You are a helpful AI assistant for AuthOps, a serverless security platform." },
+          { role: "system", content: "You are a helpful AI assistant for AuthOps. You have tools available to trigger backend workflows. If a tool call handles the user's request, you don't need to do anything else." },
           ...history,
           { role: "user", content },
         ],
         model: "llama-3.3-70b-versatile",
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "create_github_repo",
+              description: "Triggers a background workflow to create a new GitHub repository from the workflow template.",
+              parameters: {
+                type: "object",
+                properties: {
+                  repoName: {
+                    type: "string",
+                    description: "The exact name of the new GitHub repository requested by the user. (e.g. if user says 'create repo auth-app', this must be 'auth-app'). Do NOT use the function name.",
+                  },
+                  isPrivate: {
+                    type: "boolean",
+                    description: "Whether the repo should be private (true) or public (false). Defaults to false.",
+                  }
+                },
+                required: ["repoName"],
+              },
+            },
+          }
+        ],
+        tool_choice: "auto",
       });
 
-      return completion.choices[0]?.message?.content || "I'm sorry, I couldn't generate a response.";
+      const message = completion.choices[0]?.message;
+
+      if (message?.tool_calls && message.tool_calls.length > 0) {
+        let responseText = "I am processing your request.";
+
+        for (const toolCall of message.tool_calls) {
+          if (toolCall.function.name === "create_github_repo") {
+            const args = JSON.parse(toolCall.function.arguments);
+
+
+            await step.sendEvent("trigger-repo-creation", {
+              name: "github/repo.create_from_template",
+              data: {
+                userId,
+                repoName: args.repoName,
+                isPrivate: args.isPrivate || false
+              }
+            });
+
+            responseText = `I have started the background workflow to create your GitHub repository called **${args.repoName}**! Because it is handled in the background via Inngest, it is completely non-blocking.`;
+          }
+        }
+        return responseText;
+      }
+
+      return message?.content || "I'm sorry, I couldn't generate a response.";
     });
 
 
@@ -102,17 +151,26 @@ export const performGithubOperation = inngest.createFunction(
   }
 );
 
-/**
- * Creates a new GitHub repository from the workflow template for the user.
- */
 export const createGithubRepoFromTemplate = inngest.createFunction(
   { id: "create-github-repo-from-template", triggers: [{ event: "github/repo.create_from_template" }] },
   async ({ event, step }) => {
-    const { token, repoName, isPrivate = false } = event.data as { token: string; repoName: string; isPrivate?: boolean };
+
+    const { userId, repoName, isPrivate = false } = event.data as { userId: string; repoName: string; isPrivate?: boolean };
 
     const result = await step.run("create-repo-from-template", async () => {
-      const octokit = new Octokit({ auth: token || process.env.GITHUB_TOKEN });
-      
+
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      if (!user) throw new Error("User not found in DB");
+
+      const { getGithubTokenFromAuth0 } = await import("@/lib/auth0-management");
+      const githubToken = await getGithubTokenFromAuth0(user.authOId);
+
+      if (!githubToken) {
+        throw new Error("Could not find GitHub token in Auth0 for this user. Ensure they logged in via GitHub.");
+      }
+
+      const octokit = new Octokit({ auth: githubToken });
+
       const response = await octokit.rest.repos.createUsingTemplate({
         template_owner: "rajaryan2007",
         template_repo: "template-for-workflow",
