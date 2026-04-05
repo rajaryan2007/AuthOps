@@ -24,8 +24,8 @@ model User {
   authOId            String              @unique
   email              String              @unique
   username           String              @unique
-  telegramUserId     String              @unique 
-  telegramChatId     String              @unique
+  telegramUserId     String?             @unique 
+  telegramChatId     String?             @unique
   vercelAcessToken   String
   preferredFramework Framework
   createdAt          DateTime            @default(now())

@@ -2,9 +2,6 @@ import { NextResponse } from "next/server";
 import { auth0 } from "@/lib/auth0";
 import prisma from "@/lib/prisma";
 
-/**
- * GET Chat history for the authenticated user.
- */
 export async function GET() {
   try {
     const session = await auth0.getSession();

@@ -1,5 +1,5 @@
 export async function getGithubTokenFromAuth0(userId: string): Promise<string | null> {
-  const domain = process.env.AUTH0_ISSUER_BASE_URL; // e.g., https://dev-xxx.us.auth0.com/
+  const domain = process.env.AUTH0_ISSUER_BASE_URL;
 
   if (!domain || !process.env.AUTH0_M2M_CLIENT_ID || !process.env.AUTH0_M2M_CLIENT_SECRET) {
     console.error("Auth0 Management API credentials are not set in .env");

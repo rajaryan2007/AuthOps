@@ -169,13 +169,24 @@ export function ChatSection() {
         )}
         
         {isTyping && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-start gap-3">
-             <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 flex items-center justify-center shrink-0">
-                <Loader2 className="w-4 h-4 animate-spin" />
-              </div>
-              <div className="p-4 rounded-2xl bg-black/60 border border-[var(--color-panel-border)] rounded-tl-sm backdrop-blur-md text-gray-400 text-sm italic flex items-center gap-2">
-                Workflow processing...
-              </div>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-start gap-2">
+            <div className="flex items-start gap-3">
+               <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 flex items-center justify-center shrink-0">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                </div>
+                <div className="p-4 rounded-2xl bg-black/60 border border-[var(--color-panel-border)] rounded-tl-sm backdrop-blur-md text-gray-400 text-sm italic flex items-center gap-2">
+                  Workflow processing...
+                </div>
+            </div>
+            <button 
+              onClick={() => {
+                setIsTyping(false);
+                setMessages(prev => [...prev, { id: "stop-" + Date.now(), role: "assistant", content: "Generation stopped by user." }]);
+              }}
+              className="ml-11 text-xs text-red-500/80 hover:text-red-400 hover:underline transition-all flex items-center gap-1"
+            >
+              <div className="w-2 h-2 rounded-sm bg-red-500/80" /> Stop Generating
+            </button>
           </motion.div>
         )}
       </div>

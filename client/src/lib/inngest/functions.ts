@@ -16,7 +16,22 @@ export const helloWorld = inngest.createFunction(
 export const processAiChat = inngest.createFunction(
   {
     id: "process-ai-chat",
-    triggers: [{ event: "chat/message.sent" }]
+    triggers: [{ event: "chat/message.sent" }],
+    retries: 0,
+    onFailure: async ({ event, error }) => {
+      const originalEvent = event.data.event;
+      if (originalEvent && originalEvent.data && originalEvent.data.userId) {
+        const { userId } = originalEvent.data;
+
+        await prisma.chatMessage.create({
+          data: {
+            userId,
+            role: "assistant",
+            content: `I encountered an internal error: ${error.message}. Please try again.`,
+          },
+        });
+      }
+    }
   },
   async ({ event, step }) => {
     const { userId, content } = event.data as { userId: string; content: string };
@@ -33,7 +48,7 @@ export const processAiChat = inngest.createFunction(
     });
 
 
-    const aiResponse = await step.run("call-groq", async () => {
+    const groqResponse = await step.run("call-groq", async () => {
       const completion = await groq.chat.completions.create({
         messages: [
           { role: "system", content: "You are a helpful AI assistant for AuthOps. You have tools available to trigger backend workflows. If a tool call handles the user's request, you don't need to do anything else." },
@@ -70,31 +85,44 @@ export const processAiChat = inngest.createFunction(
       const message = completion.choices[0]?.message;
 
       if (message?.tool_calls && message.tool_calls.length > 0) {
-        let responseText = "I am processing your request.";
-
-        for (const toolCall of message.tool_calls) {
-          if (toolCall.function.name === "create_github_repo") {
-            const args = JSON.parse(toolCall.function.arguments);
-
-
-            await step.sendEvent("trigger-repo-creation", {
-              name: "github/repo.create_from_template",
-              data: {
-                userId,
-                repoName: args.repoName,
-                isPrivate: args.isPrivate || false
-              }
-            });
-
-            responseText = `I have started the background workflow to create your GitHub repository called **${args.repoName}**! Because it is handled in the background via Inngest, it is completely non-blocking.`;
-          }
-        }
-        return responseText;
+        return {
+          type: "tool",
+          calls: message.tool_calls.map(tc => ({
+            name: tc.function.name,
+            args: JSON.parse(tc.function.arguments)
+          }))
+        };
       }
 
-      return message?.content || "I'm sorry, I couldn't generate a response.";
+      return { type: "message", content: message?.content || "I'm sorry, I couldn't generate a response." };
     });
 
+    let aiResponse = "";
+
+    // Process the tool calls OUTSIDE of step.run
+    if (groqResponse.type === "tool") {
+      let responseText = "I am processing your request.";
+      const calls = (groqResponse as any).calls || [];
+
+      for (const call of calls) {
+        if (call.name === "create_github_repo") {
+          // It's crucial this step.sendEvent happens out here!
+          await step.sendEvent("trigger-repo-creation", {
+            name: "github/repo.create_from_template",
+            data: {
+              userId,
+              repoName: call.args.repoName,
+              isPrivate: call.args.isPrivate || false
+            }
+          });
+
+          responseText = `I have started the background workflow to create your GitHub repository called **${call.args.repoName}**! Because it is handled in the background, it is completely non-blocking.`;
+        }
+      }
+      aiResponse = responseText;
+    } else {
+      aiResponse = (groqResponse as any).content as string;
+    }
 
     await step.run("save-assistant-reply", async () => {
       await prisma.chatMessage.create({
@@ -106,9 +134,21 @@ export const processAiChat = inngest.createFunction(
       });
     });
 
+    await step.run("send-telegram-reply", async () => {
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      if (user?.telegramChatId && process.env.TELEGRAM_BOT_TOKEN) {
+        await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: user.telegramChatId, text: aiResponse }),
+        });
+      }
+    });
+
     return { success: true };
   }
 );
+
 
 
 export const sendTelegramNotification = inngest.createFunction(
