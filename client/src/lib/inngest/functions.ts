@@ -51,7 +51,10 @@ export const processAiChat = inngest.createFunction(
     const groqResponse = await step.run("call-groq", async () => {
       const completion = await groq.chat.completions.create({
         messages: [
-          { role: "system", content: "You are a helpful AI assistant for AuthOps. You have tools available to trigger backend workflows. If a tool call handles the user's request, you don't need to do anything else." },
+          {
+            role: "system",
+            content: "You are a friendly and helpful AI assistant for AuthOps. You can have general conversations with the user. If they just say hi, greet them back warmly. ONLY use your tools if they explicitly ask you to create a GitHub repository. Otherwise, just chat normally."
+          },
           ...history,
           { role: "user", content },
         ],
