@@ -11,12 +11,12 @@ export function BackendStatus() {
     async function testConnection() {
       setStatus("loading");
       try {
-        const res = await fetch("/api/proxy/api/profile");
+        const res = await fetch("/api/profile");
         const data = await res.json();
 
         if (res.ok) {
           setStatus("success");
-          setMessage(data.message || "Connected to Express!");
+          setMessage(data.message || "API Connected!");
         } else {
           setStatus("error");
           setMessage(data.error || "Connection failed");
@@ -44,9 +44,9 @@ export function BackendStatus() {
           </div>
           <div>
             <h3 className="text-lg font-semibold text-white">
-              Express Backend Connection
+              API Status
             </h3>
-            <p className="text-sm text-gray-400">Live API Proxy Verification</p>
+            <p className="text-sm text-gray-400">Serverless API Health Check</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -57,7 +57,7 @@ export function BackendStatus() {
           )}
           {status === "success" && (
             <div className="flex items-center gap-2 px-3 py-1.5 bg-green-500/10 text-green-400 rounded-full text-xs font-medium border border-green-500/20">
-              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" /> Secure Tunnel Active
+              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" /> API Connected
             </div>
           )}
           {status === "error" && (

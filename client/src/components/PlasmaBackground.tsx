@@ -53,7 +53,7 @@ void mainImage(out vec4 o, vec2 C) {
   float i, d, z, T = iTime * uSpeed * uDirection;
   vec3 O, p, S;
 
-  for (vec2 r = iResolution.xy, Q; ++i < 30.; O += o.w/d*o.xyz) {
+  for (vec2 r = iResolution.xy, Q; ++i < 20.; O += o.w/d*o.xyz) {
     p = z*normalize(vec3(C-.5*r,r.y)); 
     p.z -= 4.; 
     S = p;
@@ -90,6 +90,9 @@ void main() {
   fragColor = vec4(finalColor, alpha);
 }`;
 
+// Target ~30fps instead of 60fps to reduce GPU load
+const FRAME_INTERVAL = 1000 / 30;
+
 export const Plasma: React.FC<PlasmaProps> = ({
   color = '#ffffff',
   speed = 1,
@@ -102,7 +105,8 @@ export const Plasma: React.FC<PlasmaProps> = ({
   const mousePos = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
 
     const useCustomColor = color ? 1.0 : 0.0;
     const customColorRgb = color ? hexToRgb(color) : [1, 1, 1];
@@ -113,14 +117,14 @@ export const Plasma: React.FC<PlasmaProps> = ({
       webgl: 2,
       alpha: true,
       antialias: false,
-      dpr: 1 // Cap dpr to 1 for better performance on high-DPI displays
+      dpr: 1
     });
     const gl = renderer.gl;
     const canvas = gl.canvas as HTMLCanvasElement;
     canvas.style.display = 'block';
     canvas.style.width = '100%';
     canvas.style.height = '100%';
-    containerRef.current.appendChild(canvas);
+    container.appendChild(canvas);
 
     const geometry = new Triangle(gl);
 
@@ -145,7 +149,7 @@ export const Plasma: React.FC<PlasmaProps> = ({
 
     const handleMouseMove = (e: MouseEvent) => {
       if (!mouseInteractive) return;
-      const rect = containerRef.current!.getBoundingClientRect();
+      const rect = container.getBoundingClientRect();
       mousePos.current.x = e.clientX - rect.left;
       mousePos.current.y = e.clientY - rect.top;
       const mouseUniform = program.uniforms.uMouse.value as Float32Array;
@@ -154,11 +158,12 @@ export const Plasma: React.FC<PlasmaProps> = ({
     };
 
     if (mouseInteractive) {
-      containerRef.current.addEventListener('mousemove', handleMouseMove);
+      container.addEventListener('mousemove', handleMouseMove);
     }
 
     const setSize = () => {
-      const rect = containerRef.current!.getBoundingClientRect();
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
       const width = Math.max(1, Math.floor(rect.width));
       const height = Math.max(1, Math.floor(rect.height));
       renderer.setSize(width, height);
@@ -168,13 +173,21 @@ export const Plasma: React.FC<PlasmaProps> = ({
     };
 
     const ro = new ResizeObserver(setSize);
-    ro.observe(containerRef.current);
+    ro.observe(container);
     setSize();
 
     let raf = 0;
+    let lastFrameTime = 0;
     const t0 = performance.now();
+
     const loop = (t: number) => {
-      let timeValue = (t - t0) * 0.001;
+      raf = requestAnimationFrame(loop);
+
+      // Throttle to ~30fps
+      if (t - lastFrameTime < FRAME_INTERVAL) return;
+      lastFrameTime = t;
+
+      const timeValue = (t - t0) * 0.001;
       if (direction === 'pingpong') {
         const pingpongDuration = 10;
         const segmentTime = timeValue % pingpongDuration;
@@ -182,25 +195,30 @@ export const Plasma: React.FC<PlasmaProps> = ({
         const u = segmentTime / pingpongDuration;
         const smooth = u * u * (3 - 2 * u);
         const pingpongTime = isForward ? smooth * pingpongDuration : (1 - smooth) * pingpongDuration;
-        (program.uniforms.uDirection as any).value = 1.0;
-        (program.uniforms.iTime as any).value = pingpongTime;
+        (program.uniforms.uDirection as Record<string, unknown>).value = 1.0;
+        (program.uniforms.iTime as Record<string, unknown>).value = pingpongTime;
       } else {
-        (program.uniforms.iTime as any).value = timeValue;
+        (program.uniforms.iTime as Record<string, unknown>).value = timeValue;
       }
       renderer.render({ scene: mesh });
-      raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
 
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
-      if (mouseInteractive && containerRef.current) {
-        containerRef.current.removeEventListener('mousemove', handleMouseMove);
+
+      if (mouseInteractive) {
+        container.removeEventListener('mousemove', handleMouseMove);
       }
+
+      // Properly release WebGL context to prevent GPU memory leak
+      const loseCtx = gl.getExtension('WEBGL_lose_context');
+      if (loseCtx) loseCtx.loseContext();
+
       try {
-        containerRef.current?.removeChild(canvas);
-      } catch {}
+        container.removeChild(canvas);
+      } catch { /* already removed */ }
     };
   }, [color, speed, direction, scale, opacity, mouseInteractive]);
 

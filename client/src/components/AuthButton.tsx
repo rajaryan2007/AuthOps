@@ -27,7 +27,7 @@ export default async function AuthButton() {
           </span>
         </div>
         <a
-          href="/logout"
+          href="/auth/logout"
           className="flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all group active:scale-95 text-red-400 hover:text-red-300 border border-red-500/20 hover:border-red-500/40 hover:bg-red-500/10 rounded-xl"
         >
           <LogOut className="w-4 h-4" />
@@ -39,7 +39,7 @@ export default async function AuthButton() {
 
   return (
     <a
-      href="/login"
+      href="/auth/login"
       className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold transition-all relative group active:scale-95 text-white overflow-hidden rounded-xl bg-brand hover:shadow-[0_0_20px_rgba(139,92,246,0.4)]"
     >
       <div className="absolute inset-0 bg-white/20 group-hover:translate-x-full transition-transform duration-500 -translate-x-full skew-x-12" />

@@ -1,57 +1,102 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Send, User, Bot, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface Message {
   id: string;
-  sender: "user" | "bot";
-  text: string;
+  role: "user" | "assistant";
+  content: string;
 }
 
 export function ChatSection() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "welcome",
-      sender: "bot",
-      text: "Hello! The Express Backend & Agent interface is connected. Send a message to test the proxy tunnel!"
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+
+  // Fetch chat history from the database
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await fetch("/api/chat/history");
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(data.messages);
+        
+        // If the last message is from the user, it means AI is still processing
+        const lastMsg = data.messages[data.messages.length - 1];
+        if (lastMsg && lastMsg.role === "user") {
+          setIsTyping(true);
+        } else {
+          setIsTyping(false);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch history:", err);
+    } finally {
+      setIsInitialLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
+
+  // Polling logic when AI is thinking
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isTyping) {
+      interval = setInterval(async () => {
+        try {
+          const res = await fetch("/api/chat/history");
+          if (res.ok) {
+            const data = await res.json();
+            const lastMsg = data.messages[data.messages.length - 1];
+            
+            // Update messages
+            setMessages(data.messages);
+
+            // If assistant replied, stop typing/polling
+            if (lastMsg && lastMsg.role === "assistant") {
+              setIsTyping(false);
+            }
+          }
+        } catch (err) {
+          console.error("Polling error:", err);
+        }
+      }, 2000); // Poll every 2 seconds
+    }
+    return () => clearInterval(interval);
+  }, [isTyping]);
 
   const handleSend = async () => {
     if (!input.trim() || isTyping) return;
 
-    const userMsg: Message = { id: Date.now().toString(), sender: "user", text: input };
-    setMessages(prev => [...prev, userMsg]);
+    const optimisticMsg: Message = { id: Date.now().toString(), role: "user", content: input };
+    setMessages(prev => [...prev, optimisticMsg]);
     setInput("");
     setIsTyping(true);
 
     try {
-      const res = await fetch("/api/proxy/api/chat", {
+      const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userMsg.text })
+        body: JSON.stringify({ message: input })
       });
 
-      const data = await res.json();
+      if (!res.ok) {
+        throw new Error("Failed to send message");
+      }
       
-      const botMsg: Message = {
-        id: (Date.now() + 1).toString(),
-        sender: "bot",
-        text: res.ok ? data.reply : `Error: ${data.message || data.error || 'Failed to communicate with Express'}`
-      };
-
-      setMessages(prev => [...prev, botMsg]);
+      // We don't wait for the reply here; the polling effect will pick it up
     } catch (err) {
+      console.error("Chat Error:", err);
       setMessages(prev => [...prev, {
-        id: (Date.now() + 1).toString(),
-        sender: "bot",
-        text: "Error: Network error. Proxy might be down."
+        id: "error-" + Date.now(),
+        role: "assistant",
+        content: "Error: Failed to trigger AI workflow. Please try again."
       }]);
-    } finally {
       setIsTyping(false);
     }
   };
@@ -72,45 +117,56 @@ export function ChatSection() {
           </div>
           <div>
             <h3 className="font-semibold text-white">Agent Connect</h3>
-            <p className="text-xs text-gray-400">Tunneling via proxy to Express on port 3001</p>
+            <p className="text-xs text-gray-400">Powered by Groq & Inngest Workflow</p>
           </div>
         </div>
       </div>
 
       {/* Message Area */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
-        <AnimatePresence initial={false}>
-          {messages.map((msg) => (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              key={msg.id}
-              className={`flex items-start gap-3 max-w-[85%] ${
-                msg.sender === "user" ? "ml-auto flex-row-reverse" : "mr-auto"
-              }`}
-            >
-              <div
-                className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 shadow-lg ${
-                  msg.sender === "user" 
-                    ? "bg-brand/20 text-brand border border-brand/30" 
-                    : "bg-blue-500/20 text-blue-400 border border-blue-500/30"
+        {isInitialLoading ? (
+          <div className="flex items-center justify-center h-full opacity-50">
+            <Loader2 className="w-6 h-6 animate-spin" />
+          </div>
+        ) : (
+          <AnimatePresence initial={false}>
+            {messages.length === 0 && (
+               <div className="text-center text-gray-500 text-sm py-10">
+                  No messages yet. Send a message to start the Inngest workflow!
+               </div>
+            )}
+            {messages.map((msg) => (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                key={msg.id}
+                className={`flex items-start gap-3 max-w-[85%] ${
+                  msg.role === "user" ? "ml-auto flex-row-reverse" : "mr-auto"
                 }`}
               >
-                {msg.sender === "user" ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
-              </div>
-              
-              <div
-                className={`p-4 rounded-2xl text-sm shadow-xl leading-relaxed ${
-                  msg.sender === "user"
-                    ? "bg-brand/10 text-brand-100 border border-brand/20 rounded-tr-sm"
-                    : "bg-black/60 text-gray-300 border border-[var(--color-panel-border)] rounded-tl-sm backdrop-blur-md"
-                }`}
-              >
-                {msg.text}
-              </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
+                <div
+                  className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 shadow-lg ${
+                    msg.role === "user" 
+                      ? "bg-brand/20 text-brand border border-brand/30" 
+                      : "bg-blue-500/20 text-blue-400 border border-blue-500/30"
+                  }`}
+                >
+                  {msg.role === "user" ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+                </div>
+                
+                <div
+                  className={`p-4 rounded-2xl text-sm shadow-xl leading-relaxed whitespace-pre-wrap ${
+                    msg.role === "user"
+                      ? "bg-brand/10 text-brand-100 border border-brand/20 rounded-tr-sm"
+                      : "bg-black/60 text-gray-300 border border-[var(--color-panel-border)] rounded-tl-sm backdrop-blur-md"
+                  }`}
+                >
+                  {msg.content}
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        )}
         
         {isTyping && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-start gap-3">
@@ -118,7 +174,7 @@ export function ChatSection() {
                 <Loader2 className="w-4 h-4 animate-spin" />
               </div>
               <div className="p-4 rounded-2xl bg-black/60 border border-[var(--color-panel-border)] rounded-tl-sm backdrop-blur-md text-gray-400 text-sm italic flex items-center gap-2">
-                Express backend is processing...
+                Workflow processing...
               </div>
           </motion.div>
         )}
@@ -135,7 +191,7 @@ export function ChatSection() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             disabled={isTyping}
-            placeholder="Send a message to the backend..."
+            placeholder="Send a message to trigger the workflow..."
             className="flex-1 bg-black/50 border border-[var(--color-panel-border)] rounded-xl px-5 py-3.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-brand/50 focus:border-brand/30 shadow-inner transition-all disabled:opacity-50"
           />
           <button
