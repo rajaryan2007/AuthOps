@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Send, User, Bot, Loader2 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 
 interface Message {
   id: string;
@@ -10,210 +10,219 @@ interface Message {
   content: string;
 }
 
-export function ChatSection() {
+interface ChatSectionProps {
+  activeSessionId: string | null;
+  onChatCreated: (session: { id: string; title: string }) => void;
+}
+
+export function ChatSection({ activeSessionId, onChatCreated }: ChatSectionProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(false);
+  const [workingSessionId, setWorkingSessionId] = useState<string | null>(activeSessionId);
 
-  // Fetch chat history from the database
-  const fetchHistory = useCallback(async () => {
-    try {
-      const res = await fetch("/api/chat/history");
-      if (res.ok) {
-        const data = await res.json();
-        setMessages(data.messages);
-        
-        // If the last message is from the user, it means AI is still processing
-        const lastMsg = data.messages[data.messages.length - 1];
-        if (lastMsg && lastMsg.role === "user") {
-          setIsTyping(true);
-        } else {
-          setIsTyping(false);
-        }
-      }
-    } catch (err) {
-      console.error("Failed to fetch history:", err);
-    } finally {
-      setIsInitialLoading(false);
-    }
-  }, []);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
 
   useEffect(() => {
-    fetchHistory();
-  }, [fetchHistory]);
+    scrollToBottom();
+  }, [messages, isTyping]);
 
-  // Polling logic when AI is thinking
+  // When parent changes the active session, reset local state
+  useEffect(() => {
+    if (activeSessionId === null) {
+      setMessages([]);
+      setIsTyping(false);
+      setIsInitialLoading(false);
+      setWorkingSessionId(null);
+      return;
+    }
+
+    setWorkingSessionId(activeSessionId);
+
+    let cancelled = false;
+    setIsInitialLoading(true);
+    fetch(`/api/chat/history?sessionId=${activeSessionId}`)
+      .then(res => res.json())
+      .then(data => {
+        if (cancelled) return;
+        setMessages(data.messages || []);
+        const lastMsg = data.messages?.[data.messages.length - 1];
+        setIsTyping(lastMsg?.role === "user");
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setIsInitialLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeSessionId]);
+
+  // Polling when AI is thinking
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (isTyping) {
+    if (isTyping && workingSessionId) {
       interval = setInterval(async () => {
         try {
-          const res = await fetch("/api/chat/history");
+          const res = await fetch(`/api/chat/history?sessionId=${workingSessionId}`);
           if (res.ok) {
             const data = await res.json();
-            const lastMsg = data.messages[data.messages.length - 1];
-            
-            // Update messages
-            setMessages(data.messages);
-
-            // If assistant replied, stop typing/polling
-            if (lastMsg && lastMsg.role === "assistant") {
+            const lastMsg = data.messages?.[data.messages.length - 1];
+            setMessages(data.messages || []);
+            if (lastMsg?.role === "assistant") {
               setIsTyping(false);
             }
           }
-        } catch (err) {
-          console.error("Polling error:", err);
-        }
-      }, 2000); // Poll every 2 seconds
+        } catch {}
+      }, 2000);
     }
     return () => clearInterval(interval);
-  }, [isTyping]);
+  }, [isTyping, workingSessionId]);
 
   const handleSend = async () => {
     if (!input.trim() || isTyping) return;
 
-    const optimisticMsg: Message = { id: Date.now().toString(), role: "user", content: input };
-    setMessages(prev => [...prev, optimisticMsg]);
+    const currentInput = input;
     setInput("");
+
+    const tempId = Date.now().toString();
+    setMessages(prev => [...prev, { id: tempId, role: "user", content: currentInput }]);
     setIsTyping(true);
 
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: input })
+        body: JSON.stringify({ message: currentInput, sessionId: workingSessionId })
       });
 
-      if (!res.ok) {
-        throw new Error("Failed to send message");
+      if (res.ok) {
+        const data = await res.json();
+        if (!workingSessionId && data.sessionId) {
+          setWorkingSessionId(data.sessionId);
+          onChatCreated({
+            id: data.sessionId,
+            title: currentInput.substring(0, 30) || "New Chat"
+          });
+        }
       }
-      
-      // We don't wait for the reply here; the polling effect will pick it up
-    } catch (err) {
-      console.error("Chat Error:", err);
-      setMessages(prev => [...prev, {
-        id: "error-" + Date.now(),
-        role: "assistant",
-        content: "Error: Failed to trigger AI workflow. Please try again."
-      }]);
+    } catch {
+      setMessages(prev => [...prev, { id: "err-" + tempId, role: "assistant", content: "Error: Could not connect to AI." }]);
       setIsTyping(false);
     }
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.5 }}
-      className="glass rounded-2xl flex flex-col mt-8 w-full overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-[var(--color-panel-border)] col-span-1 md:col-span-2 lg:col-span-3"
-      style={{ minHeight: "400px", maxHeight: "600px" }}
-    >
-      {/* Header */}
-      <div className="flex justify-between items-center px-6 py-4 border-b border-[var(--color-panel-border)] bg-black/40">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-brand/20 rounded-lg border border-brand/30">
-            <Bot className="w-5 h-5 text-brand" />
-          </div>
-          <div>
-            <h3 className="font-semibold text-white">Agent Connect</h3>
-            <p className="text-xs text-gray-400">Powered by Groq & Inngest Workflow</p>
-          </div>
-        </div>
-      </div>
+    <div className="flex flex-col h-full bg-background relative selection:bg-primary/20">
+      
+      {/* Header — Nord polar glass */}
+      <header className="absolute top-0 left-0 w-full h-[56px] flex items-center px-4 z-10 bg-card/80 backdrop-blur-xl border-b-2 border-border/50">
+        <SidebarTrigger className="text-muted-foreground hover:text-foreground" />
+        <h2 className="ml-4 font-bold text-foreground text-sm tracking-tight">AuthOps AI</h2>
+        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-md bg-primary/10 text-primary text-[10px] font-bold border border-primary/20 tracking-wider">AGENT</span>
+      </header>
 
-      {/* Message Area */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+      {/* Messages Area */}
+      <div className="flex-1 overflow-y-auto px-4 md:px-12 lg:px-24 pt-20 pb-36">
         {isInitialLoading ? (
-          <div className="flex items-center justify-center h-full opacity-50">
-            <Loader2 className="w-6 h-6 animate-spin" />
+          <div className="flex items-center justify-center py-20 text-primary">
+            <Loader2 className="w-8 h-8 animate-spin" />
           </div>
         ) : (
-          <AnimatePresence initial={false}>
+          <div className="max-w-3xl mx-auto w-full flex flex-col gap-6">
             {messages.length === 0 && (
-               <div className="text-center text-gray-500 text-sm py-10">
-                  No messages yet. Send a message to start the Inngest workflow!
-               </div>
-            )}
-            {messages.map((msg) => (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                key={msg.id}
-                className={`flex items-start gap-3 max-w-[85%] ${
-                  msg.role === "user" ? "ml-auto flex-row-reverse" : "mr-auto"
-                }`}
-              >
-                <div
-                  className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 shadow-lg ${
-                    msg.role === "user" 
-                      ? "bg-brand/20 text-brand border border-brand/30" 
-                      : "bg-blue-500/20 text-blue-400 border border-blue-500/30"
-                  }`}
-                >
-                  {msg.role === "user" ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+              <div className="text-center w-full py-20">
+                <div className="w-16 h-16 bg-primary/10 border-2 border-primary/20 rounded-xl flex items-center justify-center mx-auto mb-6">
+                  <Bot className="w-8 h-8 text-primary" />
                 </div>
-                
-                <div
-                  className={`p-4 rounded-2xl text-sm shadow-xl leading-relaxed whitespace-pre-wrap ${
-                    msg.role === "user"
-                      ? "bg-brand/10 text-brand-100 border border-brand/20 rounded-tr-sm"
-                      : "bg-black/60 text-gray-300 border border-[var(--color-panel-border)] rounded-tl-sm backdrop-blur-md"
-                  }`}
-                >
+                <h3 className="text-foreground text-xl font-bold mb-2">How can I help you today?</h3>
+                <p className="text-muted-foreground text-sm max-w-md mx-auto mb-8">
+                  Trigger Inngest workflows, create repositories, review PRs, or modify code directly.
+                </p>
+                {/* Quick action suggestions */}
+                <div className="flex flex-wrap justify-center gap-2 max-w-lg mx-auto">
+                  {["Create a new repo", "Review latest PR", "Run a workflow", "Check deployments"].map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      onClick={() => setInput(suggestion)}
+                      className="btn-retro px-3 py-1.5 text-xs bg-card border-2 border-border rounded-lg text-muted-foreground hover:text-foreground"
+                      style={{ boxShadow: "2px 2px 0px #1a1d23" }}
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {messages.map((msg) => (
+              <div key={msg.id} className="w-full flex gap-3.5 text-base group">
+                <div className="w-8 h-8 rounded-lg shrink-0 flex items-center justify-center mt-0.5">
+                  {msg.role === "user" ? (
+                    <div className="w-full h-full bg-muted text-foreground flex items-center justify-center rounded-lg border-2 border-border">
+                      <User className="w-4 h-4" />
+                    </div>
+                  ) : (
+                    <div className="w-full h-full bg-primary text-primary-foreground flex items-center justify-center rounded-lg border-2 border-[#5a97a5] shadow-[0_0_10px_rgba(136,192,208,0.2)]">
+                      <Bot className="w-4 h-4" />
+                    </div>
+                  )}
+                </div>
+                <div className={`flex-1 overflow-x-auto py-1 leading-7 ${msg.role === "user" ? "text-foreground" : "text-foreground/85"}`}>
+                  {msg.role === "assistant" && (
+                    <span className="text-[10px] font-bold text-primary uppercase tracking-wider block mb-1">AuthOps Agent</span>
+                  )}
                   {msg.content}
                 </div>
-              </motion.div>
+              </div>
             ))}
-          </AnimatePresence>
-        )}
-        
-        {isTyping && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-start gap-2">
-            <div className="flex items-start gap-3">
-               <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 flex items-center justify-center shrink-0">
-                  <Loader2 className="w-4 h-4 animate-spin" />
+
+            {isTyping && (
+              <div className="w-full flex gap-3.5 text-base">
+                <div className="w-8 h-8 rounded-lg shrink-0 flex items-center justify-center mt-0.5">
+                  <div className="w-full h-full bg-primary text-primary-foreground flex items-center justify-center rounded-lg border-2 border-[#5a97a5] shadow-[0_0_10px_rgba(136,192,208,0.2)]">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  </div>
                 </div>
-                <div className="p-4 rounded-2xl bg-black/60 border border-[var(--color-panel-border)] rounded-tl-sm backdrop-blur-md text-gray-400 text-sm italic flex items-center gap-2">
-                  Workflow processing...
+                <div className="flex-1 py-1">
+                  <span className="text-[10px] font-bold text-primary uppercase tracking-wider block mb-1">AuthOps Agent</span>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 bg-primary/60 rounded-full animate-bounce [animation-delay:0ms]" />
+                    <div className="w-2 h-2 bg-primary/60 rounded-full animate-bounce [animation-delay:150ms]" />
+                    <div className="w-2 h-2 bg-primary/60 rounded-full animate-bounce [animation-delay:300ms]" />
+                    <span className="ml-2 text-muted-foreground text-sm">Processing workflow...</span>
+                  </div>
                 </div>
-            </div>
-            <button 
-              onClick={() => {
-                setIsTyping(false);
-                setMessages(prev => [...prev, { id: "stop-" + Date.now(), role: "assistant", content: "Generation stopped by user." }]);
-              }}
-              className="ml-11 text-xs text-red-500/80 hover:text-red-400 hover:underline transition-all flex items-center gap-1"
-            >
-              <div className="w-2 h-2 rounded-sm bg-red-500/80" /> Stop Generating
-            </button>
-          </motion.div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
         )}
       </div>
 
-      {/* Input Area */}
-      <div className="p-4 bg-black/60 border-t border-[var(--color-panel-border)]">
-        <form 
-          onSubmit={(e) => { e.preventDefault(); handleSend(); }}
-          className="relative max-w-4xl mx-auto flex items-center gap-2"
-        >
+      {/* Input — RetroUI styled */}
+      <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-background via-background to-transparent pt-10 pb-6 px-4">
+        <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="max-w-3xl mx-auto relative">
           <input
-            type="text"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={e => setInput(e.target.value)}
             disabled={isTyping}
-            placeholder="Send a message to trigger the workflow..."
-            className="flex-1 bg-black/50 border border-[var(--color-panel-border)] rounded-xl px-5 py-3.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-brand/50 focus:border-brand/30 shadow-inner transition-all disabled:opacity-50"
+            className="w-full bg-card/80 backdrop-blur-xl border-2 border-border rounded-xl py-4 pl-5 pr-14 text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary/50 focus:shadow-[0_0_20px_rgba(136,192,208,0.1)] transition-all text-sm"
+            placeholder="Message AuthOps Agent..."
           />
           <button
             type="submit"
             disabled={!input.trim() || isTyping}
-            className="p-3.5 bg-brand hover:bg-brand-hover text-white rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-[0_0_20px_rgba(139,92,246,0.3)] border border-transparent disabled:border-transparent active:scale-95"
+            className="absolute right-3 top-1/2 -translate-y-1/2 bg-primary hover:bg-primary/80 disabled:opacity-40 disabled:cursor-not-allowed w-10 h-10 rounded-lg flex items-center justify-center text-primary-foreground transition-all border-2 border-[#5a97a5] shadow-[2px_2px_0px_#4a7f8b] hover:shadow-[1px_1px_0px_#4a7f8b] hover:translate-y-[calc(-50%+1px)] active:shadow-none active:translate-y-[calc(-50%+2px)] cursor-pointer"
           >
-            <Send className="w-5 h-5" />
+            <Send className="w-4 h-4" />
           </button>
         </form>
+        <p className="text-center text-xs text-muted-foreground/50 mt-4">
+          AI Agent may generate inaccurate code. Always review proposed changes.
+        </p>
       </div>
-    </motion.div>
+    </div>
   );
 }

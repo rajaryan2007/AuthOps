@@ -10,7 +10,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { message } = await req.json();
+    const { message, sessionId: clientSessionId } = await req.json();
     if (!message) {
       return NextResponse.json({ error: "Message is required" }, { status: 400 });
     }
@@ -34,10 +34,20 @@ export async function POST(req: Request) {
       });
     }
 
+    // Resolve Session
+    let activeSessionId = clientSessionId;
+    if (!activeSessionId) {
+      const newSession = await prisma.chatSession.create({
+        data: { userId: user.id, title: message.substring(0, 30) }
+      });
+      activeSessionId = newSession.id;
+    }
+
     // 2. Save the user's message to the DB
     const userMessage = await prisma.chatMessage.create({
       data: {
         userId: user.id,
+        sessionId: activeSessionId,
         role: "user",
         content: message,
       },
@@ -48,6 +58,7 @@ export async function POST(req: Request) {
       name: "chat/message.sent",
       data: {
         userId: user.id,
+        sessionId: activeSessionId,
         content: message,
       },
     });
@@ -55,6 +66,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ 
       success: true, 
       messageId: userMessage.id,
+      sessionId: activeSessionId,
       status: "AI is thinking..." 
     });
   } catch (error) {

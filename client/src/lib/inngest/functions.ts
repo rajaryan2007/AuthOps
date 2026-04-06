@@ -22,7 +22,6 @@ export const processAiChat = inngest.createFunction(
       const originalEvent = event.data.event;
       if (originalEvent && originalEvent.data && originalEvent.data.userId) {
         const { userId } = originalEvent.data;
-
         await prisma.chatMessage.create({
           data: {
             userId,
@@ -34,106 +33,224 @@ export const processAiChat = inngest.createFunction(
     }
   },
   async ({ event, step }) => {
-    const { userId, content } = event.data as { userId: string; content: string };
+    const { userId, sessionId, content } = event.data as { userId: string; sessionId: string; content: string };
+
+    // 1. Fetch History
     const history = await step.run("fetch-history", async () => {
       const messages = await prisma.chatMessage.findMany({
-        where: { userId },
+        where: { userId, sessionId },
         orderBy: { createdAt: "desc" },
         take: 10,
       });
-      return messages.reverse().map((msg: { role: string; content: string }) => ({
+      return messages.reverse().map((msg) => ({
         role: msg.role as "user" | "assistant",
         content: msg.content,
       }));
     });
 
+    // 2. Fetch Github Auth Context
+    const authData = await step.run("fetch-auth-data", async () => {
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      const { getGithubTokenFromAuth0 } = await import("@/lib/auth0-management");
+      const token = await getGithubTokenFromAuth0(user!.authOId);
+      if (!token) throw new Error("Could not find GitHub Token. Please link your GitHub account.");
 
-    const groqResponse = await step.run("call-groq", async () => {
-      const completion = await groq.chat.completions.create({
-        messages: [
-          {
-            role: "system",
-            content: "You are a friendly and helpful AI assistant for AuthOps. You can have general conversations with the user. If they just say hi, greet them back warmly. ONLY use your tools if they explicitly ask you to create a GitHub repository. Otherwise, just chat normally."
-          },
-          ...history,
-          { role: "user", content },
-        ],
-        model: "llama-3.3-70b-versatile",
-        tools: [
-          {
-            type: "function",
-            function: {
-              name: "create_github_repo",
-              description: "Triggers a background workflow to create a new GitHub repository from the workflow template.",
-              parameters: {
-                type: "object",
-                properties: {
-                  repoName: {
-                    type: "string",
-                    description: "The exact name of the new GitHub repository requested by the user. (e.g. if user says 'create repo auth-app', this must be 'auth-app'). Do NOT use the function name.",
-                  },
-                  isPrivate: {
-                    type: "boolean",
-                    description: "Whether the repo should be private (true) or public (false). Defaults to false.",
-                  }
-                },
-                required: ["repoName"],
-              },
-            },
-          }
-        ],
-        tool_choice: "auto",
-      });
-
-      const message = completion.choices[0]?.message;
-
-      if (message?.tool_calls && message.tool_calls.length > 0) {
-        return {
-          type: "tool",
-          calls: message.tool_calls.map(tc => ({
-            name: tc.function.name,
-            args: JSON.parse(tc.function.arguments)
-          }))
-        };
-      }
-
-      return { type: "message", content: message?.content || "I'm sorry, I couldn't generate a response." };
+      const octokit = new Octokit({ auth: token });
+      const { data: authUser } = await octokit.rest.users.getAuthenticated();
+      return { token, defaultOwner: authUser.login };
     });
 
-    let aiResponse = "";
+    const SYSTEM_PROMPT = {
+      role: "system",
+      content: "You are a friendly AuthOps AI. Answer naturally. You have tools for GitHub operations. ONLY call tools if explicitly requested. Try to format data nicely. If no owner is provided for a repo, your system uses the authenticated user by default."
+    };
 
-    // Process the tool calls OUTSIDE of step.run
-    if (groqResponse.type === "tool") {
-      let responseText = "I am processing your request.";
-      const calls = (groqResponse as any).calls || [];
-
-      for (const call of calls) {
-        if (call.name === "create_github_repo") {
-          // It's crucial this step.sendEvent happens out here!
-          await step.sendEvent("trigger-repo-creation", {
-            name: "github/repo.create_from_template",
-            data: {
-              userId,
-              repoName: call.args.repoName,
-              isPrivate: call.args.isPrivate || false
-            }
-          });
-
-          responseText = `I have started the background workflow to create your GitHub repository called **${call.args.repoName}**! Because it is handled in the background, it is completely non-blocking.`;
+    const TOOLS = [
+      {
+        type: "function", function: {
+          name: "create_github_repo", description: "Queue background workflow to create a repo.",
+          parameters: { type: "object", properties: { repoName: { type: "string" }, isPrivate: { type: "boolean" } }, required: ["repoName"] },
+        }
+      },
+      {
+        type: "function", function: {
+          name: "get_repo_stats", description: "Get stars, forks, and watchers for a repo.",
+          parameters: { type: "object", properties: { repo: { type: "string" }, owner: { type: "string", description: "Optional. Leave blank to use current user." } }, required: ["repo"] },
+        }
+      },
+      {
+        type: "function", function: {
+          name: "create_issue", description: "Create a new issue in a repo.",
+          parameters: { type: "object", properties: { repo: { type: "string" }, title: { type: "string" }, body: { type: "string" }, owner: { type: "string" } }, required: ["repo", "title", "body"] },
+        }
+      },
+      {
+        type: "function", function: {
+          name: "check_pull_requests", description: "List open pull requests for a repo.",
+          parameters: { type: "object", properties: { repo: { type: "string" }, owner: { type: "string" } }, required: ["repo"] },
+        }
+      },
+      {
+        type: "function", function: {
+          name: "star_repository", description: "Star a repository.",
+          parameters: { type: "object", properties: { repo: { type: "string" }, owner: { type: "string" } }, required: ["repo"] },
+        }
+      },
+      {
+        type: "function", function: {
+          name: "summarize_commits", description: "Fetch the latest 5 commits for a repo.",
+          parameters: { type: "object", properties: { repo: { type: "string" }, owner: { type: "string" } }, required: ["repo"] },
+        }
+      },
+      {
+        type: "function", function: {
+          name: "get_trending_repos", description: "Fetch the current trending GitHub repositories based on stars from the past week.",
+          parameters: { type: "object", properties: { limit: { type: "integer", description: "Number of repos to return (max 10)", default: 5 } } },
+        }
+      },
+      {
+        type: "function", function: {
+          name: "review_pull_request", description: "Fetch the code diff of a PR to review it.",
+          parameters: { type: "object", properties: { repo: { type: "string" }, pr_number: { type: "integer" }, owner: { type: "string" } }, required: ["repo", "pr_number"] },
+        }
+      },
+      {
+        type: "function", function: {
+          name: "read_file", description: "Read the full contents of a file in a repository.",
+          parameters: { type: "object", properties: { repo: { type: "string" }, path: { type: "string", description: "Path to file e.g. src/index.ts" }, owner: { type: "string" } }, required: ["repo", "path"] },
+        }
+      },
+      {
+        type: "function", function: {
+          name: "update_file", description: "Update or create a file directly on GitHub with new code.",
+          parameters: { type: "object", properties: { repo: { type: "string" }, path: { type: "string" }, message: { type: "string", description: "Commit message" }, content: { type: "string", description: "New exact raw file contents" }, owner: { type: "string" } }, required: ["repo", "path", "message", "content"] },
         }
       }
-      aiResponse = responseText;
+    ];
+
+
+    const groqResponse = await step.run("call-groq-turn-1", async () => {
+      const completion = await groq.chat.completions.create({
+        messages: [SYSTEM_PROMPT as any, ...history, { role: "user", content }],
+        model: "llama-3.3-70b-versatile",
+        tools: TOOLS as any,
+        tool_choice: "auto",
+      });
+      return completion.choices[0]?.message;
+    });
+
+    let aiResponse = "I'm sorry, I couldn't generate a response.";
+
+    if (groqResponse?.tool_calls && groqResponse.tool_calls.length > 0) {
+      // Execute synchronous GitHub API calls
+      const toolResults = await step.run("execute-tools", async () => {
+        const octokit = new Octokit({ auth: authData.token });
+        const results = [];
+
+        for (const call of groqResponse.tool_calls as any[]) {
+          const args = JSON.parse(call.function.arguments);
+          const owner = args.owner || authData.defaultOwner;
+          const repo = args.repoName || args.repo;
+
+          let content = "";
+          try {
+            if (call.function.name === "create_github_repo") {
+              content = "Workflow triggered successfully in background.";
+            } else if (call.function.name === "get_repo_stats") {
+              const { data } = await octokit.rest.repos.get({ owner, repo });
+              content = JSON.stringify({ stars: data.stargazers_count, forks: data.forks_count, description: data.description });
+            } else if (call.function.name === "create_issue") {
+              const { data } = await octokit.rest.issues.create({ owner, repo, title: args.title, body: args.body });
+              content = `Issue created: ${data.html_url}`;
+            } else if (call.function.name === "check_pull_requests") {
+              const { data } = await octokit.rest.pulls.list({ owner, repo, state: "open" });
+              content = JSON.stringify(data.map(pr => ({ title: pr.title, user: pr.user?.login, url: pr.html_url })).slice(0, 5));
+            } else if (call.function.name === "star_repository") {
+              await octokit.rest.activity.starRepoForAuthenticatedUser({ owner, repo });
+              content = `Successfully starred ${owner}/${repo}`;
+            } else if (call.function.name === "summarize_commits") {
+              const { data } = await octokit.rest.repos.listCommits({ owner, repo, per_page: 5 });
+              content = JSON.stringify(data.map((c: any) => ({ msg: c.commit.message, author: c.commit.author?.name })));
+            } else if (call.function.name === "get_trending_repos") {
+              const lastWeekDate = new Date();
+              lastWeekDate.setDate(lastWeekDate.getDate() - 7);
+              const dateQuery = lastWeekDate.toISOString().split("T")[0];
+              const per_page = args.limit ? Math.min(args.limit, 10) : 5;
+              const { data } = await octokit.rest.search.repos({
+                q: `created:>=${dateQuery}`,
+                sort: "stars",
+                order: "desc",
+                per_page
+              });
+              content = JSON.stringify((data as any).items.map((repo: any) => ({ name: repo.full_name, stars: repo.stargazers_count, url: repo.html_url })));
+            } else if (call.function.name === "review_pull_request") {
+              const { data } = await octokit.rest.pulls.listFiles({ owner, repo, pull_number: args.pr_number });
+              content = data.map((f: any) => `File: ${f.filename}\nPatch:\n${f.patch}`).join("\n\n").substring(0, 5000);
+            } else if (call.function.name === "read_file") {
+              const { data } = await octokit.rest.repos.getContent({ owner, repo, path: args.path });
+              if ("content" in data && data.type === "file") {
+                content = Buffer.from(data.content, "base64").toString("utf-8");
+              } else {
+                throw new Error("Target is not a readable file.");
+              }
+            } else if (call.function.name === "update_file") {
+              let sha: string | undefined;
+              try {
+                const { data: existing } = await octokit.rest.repos.getContent({ owner, repo, path: args.path });
+                if ("sha" in existing) sha = existing.sha;
+              } catch (e) {
+
+              }
+              const { data } = await octokit.rest.repos.createOrUpdateFileContents({
+                owner, repo, path: args.path,
+                message: args.message,
+                content: Buffer.from(args.content).toString("base64"),
+                sha
+              });
+              content = `File updated successfully! Commit: ${data.commit.html_url}`;
+            }
+          } catch (e: any) {
+            content = `Error executing tool: ${e.message}`;
+          }
+          results.push({ tool_call_id: call.id, role: "tool", name: call.function.name, content });
+        }
+        return results;
+      });
+
+      // Dispatch background event ONLY for create_github_repo (outside step.run)
+      for (const call of groqResponse.tool_calls as any[]) {
+        if (call.function.name === "create_github_repo") {
+          const args = JSON.parse(call.function.arguments);
+          await step.sendEvent("trigger-repo-creation", {
+            name: "github/repo.create_from_template",
+            data: { userId, repoName: args.repoName || args.repo, isPrivate: args.isPrivate || false }
+          });
+        }
+      }
+
+      // TURN 2: Pass data back to Groq for final reply
+      const finalReply = await step.run("call-groq-turn-2", async () => {
+        const completion = await groq.chat.completions.create({
+          messages: [
+            SYSTEM_PROMPT as any,
+            ...history,
+            { role: "user", content },
+            groqResponse as any,
+            ...toolResults
+          ],
+          model: "llama-3.3-70b-versatile",
+        });
+        return completion.choices[0]?.message?.content;
+      });
+
+      aiResponse = finalReply || "Completed processing your request.";
     } else {
-      aiResponse = (groqResponse as any).content as string;
+      aiResponse = groqResponse?.content as string;
     }
 
     await step.run("save-assistant-reply", async () => {
       await prisma.chatMessage.create({
-        data: {
-          userId,
-          role: "assistant",
-          content: aiResponse,
-        },
+        data: { userId, sessionId, role: "assistant", content: aiResponse },
       });
     });
 
@@ -141,8 +258,7 @@ export const processAiChat = inngest.createFunction(
       const user = await prisma.user.findUnique({ where: { id: userId } });
       if (user?.telegramChatId && process.env.TELEGRAM_BOT_TOKEN) {
         await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ chat_id: user.telegramChatId, text: aiResponse }),
         });
       }

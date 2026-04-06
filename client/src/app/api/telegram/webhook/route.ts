@@ -24,11 +24,11 @@ export async function POST(req: Request) {
     const text = update.message.text as string;
 
     // 1. Handle Account Linking (/start command)
-    if (text.startsWith("/start ")) {
+    if (text.startsWith("/start")) {
       const parts = text.split(" ");
       if (parts.length > 1) {
         const userId = parts[1];
-        
+
         const user = await prisma.user.findUnique({ where: { id: userId } });
         if (user) {
           await prisma.user.update({
@@ -40,21 +40,37 @@ export async function POST(req: Request) {
           await sendTelegramMessage(chatId, "❌ Invalid activation token. User not found.");
         }
         return NextResponse.json({ ok: true });
+      } else {
+
+        await sendTelegramMessage(chatId, "👋 Welcome to AuthOps Agent!\n\nTo use this bot, you need to link it to your web account.\nPlease log in to https://authops-app.vercel.app, find your Secret ID in the Dashboard, and send: \n\n`/start YOUR-SECRET-ID-HERE`");
+        return NextResponse.json({ ok: true });
       }
     }
 
-    // 2. Look up the linked user
+
     const user = await prisma.user.findUnique({ where: { telegramChatId: chatId } });
-    
+
     if (!user) {
       await sendTelegramMessage(chatId, "⚠️ Your account is not linked. Please go to AuthOps Web and get your activation link.");
       return NextResponse.json({ ok: true });
+    }
+
+    let session = await prisma.chatSession.findFirst({
+      where: { userId: user.id },
+      orderBy: { updatedAt: "desc" }
+    });
+
+    if (!session) {
+      session = await prisma.chatSession.create({
+        data: { userId: user.id, title: "Telegram Chat" }
+      });
     }
 
     // 3. Save Chat Message to DB
     await prisma.chatMessage.create({
       data: {
         userId: user.id,
+        sessionId: session.id,
         role: "user",
         content: text,
       },
@@ -65,6 +81,7 @@ export async function POST(req: Request) {
       name: "chat/message.sent",
       data: {
         userId: user.id,
+        sessionId: session.id,
         content: text,
         source: "telegram" // Optional context
       }

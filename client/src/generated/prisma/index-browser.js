@@ -134,9 +134,18 @@ exports.Prisma.UserScalarFieldEnum = {
   lastActiveAt: 'lastActiveAt'
 };
 
+exports.Prisma.ChatSessionScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  title: 'title',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+};
+
 exports.Prisma.ChatMessageScalarFieldEnum = {
   id: 'id',
   userId: 'userId',
+  sessionId: 'sessionId',
   role: 'role',
   content: 'content',
   createdAt: 'createdAt'
@@ -274,6 +283,7 @@ exports.ResourceType = exports.$Enums.ResourceType = {
 
 exports.Prisma.ModelName = {
   User: 'User',
+  ChatSession: 'ChatSession',
   ChatMessage: 'ChatMessage',
   TokenVaultMapping: 'TokenVaultMapping',
   WorkFlowExecution: 'WorkFlowExecution',
