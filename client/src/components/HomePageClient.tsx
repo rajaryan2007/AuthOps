@@ -4,6 +4,7 @@ import { motion, useScroll, useTransform } from "framer-motion";
 import { VaultConfig } from "@/components/VaultConfig";
 import { GitHubActions } from "@/components/GitHubActions";
 import { TelegramStatus } from "@/components/TelegramStatus";
+import { VercelStatus } from "@/components/VercelStatus";
 import { GlowCard } from "@/components/GlowCard";
 import PixelSnow from "@/components/PixelSnow";
 import Link from "next/link";
@@ -314,10 +315,11 @@ function DashboardBento() {
             Your agentic operations at a glance.
           </p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-5xl mx-auto">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 max-w-7xl mx-auto">
           <VaultConfig />
           <GitHubActions />
           <TelegramStatus />
+          <VercelStatus />
         </div>
       </div>
     </section>

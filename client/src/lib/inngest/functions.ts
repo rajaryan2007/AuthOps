@@ -125,6 +125,12 @@ export const processAiChat = inngest.createFunction(
           name: "update_file", description: "Update or create a file directly on GitHub with new code.",
           parameters: { type: "object", properties: { repo: { type: "string" }, path: { type: "string" }, message: { type: "string", description: "Commit message" }, content: { type: "string", description: "New exact raw file contents" }, owner: { type: "string" } }, required: ["repo", "path", "message", "content"] },
         }
+      },
+      {
+        type: "function", function: {
+          name: "deploy_to_vercel", description: "Trigger a production deployment of the application on Vercel.",
+          parameters: { type: "object", properties: { projectName: { type: "string", description: "Name of the project to deploy" } } },
+        }
       }
     ];
 
@@ -208,6 +214,22 @@ export const processAiChat = inngest.createFunction(
                 sha
               });
               content = `File updated successfully! Commit: ${data.commit.html_url}`;
+            } else if (call.function.name === "deploy_to_vercel") {
+              const hookUrl = process.env.VERCEL_DEPLOY_HOOK_URL;
+              
+              if (hookUrl) {
+                // Actually trigger the real deployment!
+                const res = await fetch(hookUrl, { method: "POST" });
+                const textBody = await res.text();
+                
+                if (res.ok) {
+                   content = `Vercel Deployment Triggered Successfully! Vercel Response: ${textBody}`;
+                } else {
+                   content = `Failed to deploy to Vercel. Status: ${res.status}. Vercel Response: ${textBody}`;
+                }
+              } else {
+                content = `Error: VERCEL_DEPLOY_HOOK_URL is not set in your .env file. I cannot deploy until you give me the hook url!`;
+              }
             }
           } catch (e: any) {
             content = `Error executing tool: ${e.message}`;
