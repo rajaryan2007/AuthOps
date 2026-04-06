@@ -3,7 +3,7 @@ import { Send, MessageSquare, BellRing } from "lucide-react";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
-export function TelegramStatus() {
+export function TelegramStatus({ userId }: { userId?: string }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -24,11 +24,14 @@ export function TelegramStatus() {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="bg-muted/50 border-2 border-border/60 rounded-lg p-3 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground font-medium">Chat ID</span>
-              <span className="text-[11px] px-2 py-0.5 bg-muted rounded-md text-muted-foreground font-mono border border-border/60">
-                105829302
-              </span>
+            <div className="flex flex-col gap-1.5 pt-1">
+              <span className="text-xs text-muted-foreground font-medium">Activation Command</span>
+              <div className="flex items-center gap-2">
+                <code className="text-[10.5px] px-2 py-1.5 bg-background rounded-md text-primary font-mono border border-primary/20 break-all select-all flex-1 text-center">
+                  /start {userId || "login-first"}
+                </code>
+              </div>
+              <p className="text-[10px] text-center text-muted-foreground mt-1">Send this to the bot to link chat.</p>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground font-medium">Notify on Auto-Merge</span>

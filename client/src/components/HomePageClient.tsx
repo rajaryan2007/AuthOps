@@ -303,7 +303,7 @@ function BentoFeatures() {
 }
 
 // --- DASHBOARD BENTO (Logged in) ---
-function DashboardBento() {
+function DashboardBento({ userId }: { userId?: string }) {
   return (
     <section className="relative z-10 pb-32 pt-10">
       <div className="container mx-auto px-6 md:px-12">
@@ -318,7 +318,7 @@ function DashboardBento() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 max-w-7xl mx-auto">
           <VaultConfig />
           <GitHubActions />
-          <TelegramStatus />
+          <TelegramStatus userId={userId} />
           <VercelStatus />
         </div>
       </div>
@@ -521,15 +521,17 @@ function SiteFooter() {
 // --- MAIN PAGE WRAPPER ---
 export default function HomePageClient({
   isLoggedIn,
+  userId,
 }: {
   isLoggedIn: boolean;
+  userId?: string;
 }) {
   return (
     <div className="min-h-screen bg-background text-foreground selection:bg-primary/30 selection:text-primary">
       <PixelSnow count={80} color="#88C0D0" speed={0.4} />
       <main>
         <HeroSection isLoggedIn={isLoggedIn} />
-        {isLoggedIn ? <DashboardBento /> : <BentoFeatures />}
+        {isLoggedIn ? <DashboardBento userId={userId} /> : <BentoFeatures />}
         <ProductivitySection />
       </main>
       <SiteFooter />
