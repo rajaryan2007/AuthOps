@@ -115,7 +115,7 @@ function HeroSection({ isLoggedIn }: { isLoggedIn: boolean }) {
                 <ArrowRight size={20} />
               </a>
               <a
-                href="https://github.com"
+                href="https://github.com/rajaryan2007/AuthOps"
                 className="btn-retro flex items-center gap-2 rounded-xl border-2 border-border bg-card px-8 py-4 text-lg font-medium text-foreground"
                 style={{ boxShadow: "4px 4px 0px #1a1d23" }}
               >
@@ -137,8 +137,7 @@ function HeroSection({ isLoggedIn }: { isLoggedIn: boolean }) {
       >
         <div className="overflow-hidden rounded-t-3xl border-x-2 border-t-2 border-border bg-card/40 p-2 md:p-4 shadow-[0_-20px_80px_rgba(136,192,208,0.15)] backdrop-blur-sm">
           <div className="relative rounded-2xl border-2 border-border overflow-hidden bg-background shadow-2xl h-[300px] md:h-[600px]">
-            {/* Actual AuthOps app screenshot */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
+          
             <img
               src="/authops.png"
               alt="AuthOps Application"
