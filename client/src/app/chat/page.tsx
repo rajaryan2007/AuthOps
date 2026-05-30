@@ -22,7 +22,7 @@ export default async function ChatPage() {
           </div>
           <h2 className="text-2xl font-bold text-white mb-3">Chat Restricted</h2>
           <p className="text-gray-400 mb-8 max-w-md">
-            Please sign in using your Auth0 credentials to access the AuthOps Agent relay.
+            Please sign n using your Auth0 credentials to access the AuthOps Agent relay.
           </p>
           <div className="scale-110">
             <AuthButton />
